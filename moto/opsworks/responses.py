@@ -146,3 +146,23 @@ class OpsWorksResponse(BaseResponse):
         instance_id = self.parameters.get("InstanceId")
         self.opsworks_backend.start_instance(instance_id)
         return ""
+
+    def create_deployment(self):
+        kwargs = dict(
+            stack_id=self.parameters.get("StackId"),
+            app_id=self.parameters.get("AppId"),
+            instance_ids=self.parameters.get("InstanceIds"),
+            layer_ids=self.parameters.get("LayerIds"),
+            command=self.parameters.get("Command"),
+            comment=self.parameters.get("Comment"),
+            custom_json=self.parameters.get("CustomJson"),
+        )
+        deployment = self.opsworks_backend.create_deployment(**kwargs)
+        return json.dumps({"DeploymentId": deployment.id}, indent=1)
+
+    def describe_deployments(self):
+        stack_id = self.parameters.get("StackId")
+        app_id = self.parameters.get("AppId")
+        deployment_ids = self.parameters.get("DeploymentIds")
+        deployments = self.opsworks_backend.describe_deployments(stack_id, app_id, deployment_ids)
+        return json.dumps({"Deployments": deployments}, indent=1)

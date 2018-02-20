@@ -166,6 +166,62 @@ class OpsworkInstance(BaseModel):
         return d
 
 
+class Deployment(BaseModel):
+    def __init__(self, stack_id, command,
+                 app_id=None,
+                 instance_ids=None,
+                 layer_ids=None,
+                 comment="",
+                 custom_json=None):
+        self.stack_id = stack_id
+        self.command = command
+
+        self.app_id = app_id
+
+        self.instance_ids = instance_ids
+        if instance_ids is None:
+            self.instance_ids = []
+
+        self.layer_ids = layer_ids
+        if layer_ids is None:
+            self.layer_ids = []
+
+        self.comment = comment
+        self.custom_json = custom_json
+
+        self.user_arn = "arn:aws:iam::{account_number}:user/{id}".format(
+            account_number='123456789012',
+            id='deploy_user'
+        )
+
+        self.id = "{0}".format(uuid.uuid4())
+        self.created_at = datetime.datetime.utcnow()
+        self.completed_at = self.created_at + datetime.timedelta(minutes=2)
+        self.status = 'successful'
+
+    def __eq__(self, other):
+        return self.id == other.id
+
+    def to_dict(self):
+        d = {
+            "AppId": self.app_id,
+            "Command": self.command,
+            "Comment": self.comment,
+            "CompletedAt": self.completed_at.isoformat(),
+            "CreatedAt": self.created_at.isoformat(),
+            "DeploymentId": self.id,
+            "Duration": (self.completed_at - self.created_at).seconds,
+            "IamUserArn": self.user_arn,
+            "InstanceIds": self.instance_ids,
+            "StackId": self.stack_id,
+            "Status": self.status,
+
+        }
+        if self.custom_json is not None:
+            d.update({"CustomJson": self.custom_json})
+        return d
+
+
 class Layer(BaseModel):
 
     def __init__(self, stack_id, type, name, shortname,
@@ -347,6 +403,7 @@ class Stack(BaseModel):
         self.id = "{0}".format(uuid.uuid4())
         self.layers = []
         self.apps = []
+        self.deployments = []
         self.account_number = "123456789012"
         self.created_at = datetime.datetime.utcnow()
 
@@ -475,6 +532,7 @@ class OpsWorksBackend(BaseBackend):
         self.layers = {}
         self.apps = {}
         self.instances = {}
+        self.deployments = {}
         self.ec2_backend = ec2_backend
 
     def reset(self):
@@ -562,6 +620,25 @@ class OpsWorksBackend(BaseBackend):
         self.instances[opsworks_instance.id] = opsworks_instance
         return opsworks_instance
 
+    def create_deployment(self, **kwargs):
+        stackid = kwargs['stack_id']
+        app_id = kwargs['app_id']
+
+        if stackid not in self.stacks:
+            raise ResourceNotFoundException(stackid)
+
+        if app_id and app_id not in self.apps:
+            raise ResourceNotFoundException(app_id)
+
+        # if name in [a.name for a in self.stacks[stackid].deployments]:
+        #     raise ValidationException(
+        #         'There is already an deployment named "{0}" '
+        #         'for this stack'.format(name))
+        deployment = Deployment(**kwargs)
+        self.deployments[deployment.id] = deployment
+        self.stacks[stackid].deployments.append(deployment)
+        return deployment
+
     def describe_stacks(self, stack_ids):
         if stack_ids is None:
             return [stack.to_dict() for stack in self.stacks.values()]
@@ -635,6 +712,33 @@ class OpsWorksBackend(BaseBackend):
             raise ResourceNotFoundException(
                 "Unable to find instance with ID {0}".format(instance_id))
         self.instances[instance_id].start()
+
+    def describe_deployments(self, stack_id, app_id, deployment_ids):
+        if len(list(filter(None, (deployment_ids, app_id, stack_id)))) != 1:
+            raise ValidationException("Please provide either one or more "
+                                      "deployment IDs or one stack ID or one "
+                                      "app ID")
+        if deployment_ids:
+            unknown_deployment = set(deployment_ids) - set(self.deployments.keys())
+            if unknown_deployment:
+                raise ResourceNotFoundException(", ".join(unknown_deployment))
+            return [self.deployments[id].to_dict() for id in deployment_ids]
+
+        if app_id:
+            if app_id not in self.app:
+                raise ResourceNotFoundException(
+                    "Unable to find app with ID {0}".format(app_id))
+            deployments = [d.to_dict() for d in self.deployments.values()
+                         if app_id == d.app_id]
+            return deployments
+
+        if stack_id:
+            if stack_id not in self.stacks:
+                raise ResourceNotFoundException(
+                    "Unable to find stack with ID {0}".format(stack_id))
+            deployments = [d.to_dict() for d in self.deployments.values()
+                         if stack_id == d.stack_id]
+            return deployments
 
 
 opsworks_backends = {}
